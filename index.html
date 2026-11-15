@@ -7,10 +7,9 @@
 <meta name="apple-mobile-web-app-title" content="朝ボード">
 <title>朝ボード</title>
 <style>
-:root{--bg:#f2f2ee;--card:#fff;--tx:#1d1d1b;--tx2:#5f5e5a;--tx3:#9a9890;--line:#e3e1d9;--ac:#185fa5;--acbg:#e6f1fb}
-@media (prefers-color-scheme:dark){:root{--bg:#161615;--card:#232321;--tx:#f1efe8;--tx2:#b4b2a9;--tx3:#7b7a74;--line:#37362f;--ac:#85b7eb;--acbg:#0c447c}}
+:root{color-scheme:light;--card:rgba(255,255,255,.93);--tx:#2b2a27;--tx2:#615f58;--tx3:#9b988e;--line:#efe8d8;--ac:#c2590a;--acbg:#ffe6bd}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--tx);font-family:-apple-system,"Hiragino Sans",sans-serif;padding:16px;min-height:100vh}
+body{margin:0;background:#fff4dc linear-gradient(180deg,#bfe0f8 0%,#e9f2f6 28%,#fff1d4 62%,#ffe9c2 100%) fixed;color:var(--tx);font-family:-apple-system,"Hiragino Sans",sans-serif;padding:16px;min-height:100vh}
 .grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.6fr);gap:14px;max-width:1180px;margin:0 auto}
 .col{display:flex;flex-direction:column;gap:14px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 20px}
@@ -33,6 +32,12 @@ td.r,th.r{text-align:right}
 .note{font-size:12px;color:var(--tx3);margin-top:10px;line-height:1.6}
 iframe{border:0;width:100%;height:300px;border-radius:8px}
 button{font:inherit;font-size:14px;padding:8px 16px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--tx2)}
+#ph{position:relative;aspect-ratio:4/3;border-radius:10px;overflow:hidden;background:#f3ead7}
+#ph img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 1.2s}
+#ph img.on{opacity:1}
+#phEmpty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:16px;font-size:14px;color:var(--tx2)}
+#phBar{display:flex;align-items:center;gap:10px;margin-top:8px;font-size:13px;color:var(--tx2)}
+#phBar span{flex:1}
 @media (max-width:820px){.grid{grid-template-columns:1fr}}
 </style>
 </head>
@@ -41,13 +46,18 @@ button{font:inherit;font-size:14px;padding:8px 16px;border-radius:8px;border:1px
  <div class="col">
   <div class="card"><div id="date"></div><div id="clock"></div></div>
   <div class="card">
-   <div class="lbl"><span>川口市の天気</span><span id="wxupd"></span></div>
+   <div class="lbl"><span>今日の天気(降水確率)</span><span id="wxupd"></span></div>
    <div class="wx"><div class="t" id="wxt">--</div><div class="s" id="wxs">読み込み中…</div></div>
    <div class="hrs" id="wxh"></div>
   </div>
   <div class="card">
    <div class="lbl"><span>今日の予定</span></div>
    <div id="cal"></div>
+  </div>
+  <div class="card" style="padding:10px">
+   <div id="ph"><img id="p1" alt=""><img id="p2" alt=""><div id="phEmpty">写真を選ぶと、ここでスライドショーが始まります</div></div>
+   <div id="phBar"><input type="file" id="phIn" accept="image/*" multiple hidden><button id="phAdd">写真を選ぶ</button><span id="phCount"></span><button id="phClear">すべて削除</button></div>
+   <div class="note" style="margin:6px 4px 2px">写真はこのiPadの中だけに保存され、公開されません。</div>
   </div>
  </div>
  <div class="col">
@@ -107,24 +117,107 @@ function render(){
 }
 async function weather(){
   try{
-    const u="https://api.open-meteo.com/v1/forecast?latitude="+LAT+"&longitude="+LON+"&hourly=temperature_2m,precipitation_probability&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&current=temperature_2m,weather_code&timezone=Asia%2FTokyo&forecast_days=1";
-    const j=await (await fetch(u)).json();
-    const wc=c=>c===0?"快晴":c<=2?"晴れ":c===3?"くもり":c<=48?"霧":c<=57?"霧雨":c<=67?"雨":c<=77?"雪":c<=82?"にわか雨":c<=86?"にわか雪":"雷雨";
-    document.getElementById("wxt").textContent=Math.round(j.current.temperature_2m)+"°C";
-    document.getElementById("wxs").innerHTML=wc(j.current.weather_code)+"<br>最高"+Math.round(j.daily.temperature_2m_max[0])+" / 最低"+Math.round(j.daily.temperature_2m_min[0])+"・降水確率"+j.daily.precipitation_probability_max[0]+"%";
+    const ctl=new AbortController();setTimeout(function(){ctl.abort()},10000);
+    const j=await (await fetch("https://www.jma.go.jp/bosai/forecast/data/forecast/110000.json",{signal:ctl.signal})).json();
+    const ts=j[0].timeSeries;
+    const a0=ts[0].areas.find(function(a){return a.area.code==="110010"});
+    const a1=ts[1].areas.find(function(a){return a.area.code==="110010"});
+    const a2=ts[2].areas.find(function(a){return a.area.code==="43241"})||ts[2].areas[0];
+    const today=ymd(new Date());
+    let mx="--",mn="--";
+    ts[2].timeDefines.forEach(function(d,i){
+      if(d.slice(0,10)!==today) return;
+      if(d.slice(11,13)==="09") mx=a2.temps[i]; else if(d.slice(11,13)==="00") mn=a2.temps[i];
+    });
+    document.getElementById("wxt").textContent=mx+"°C";
+    document.getElementById("wxs").innerHTML=a0.weathers[0].replace(/　/g," ")+"<br>最高気温"+mx+"° / 最低"+mn+"°";
     let h="";
-    [7,9,12,15,18].forEach(function(hr){h+='<span><b>'+Math.round(j.hourly.temperature_2m[hr])+'°</b>'+hr+'時 '+j.hourly.precipitation_probability[hr]+'%</span>'});
+    ts[1].timeDefines.forEach(function(d,i){
+      if(d.slice(0,10)!==today) return;
+      const hr=+d.slice(11,13);
+      h+='<span><b>'+a1.pops[i]+'%</b>'+hr+'時〜'+(hr+6)+'時</span>';
+    });
     document.getElementById("wxh").innerHTML=h;
-    document.getElementById("wxupd").textContent="更新 "+pad(new Date().getHours())+":"+pad(new Date().getMinutes());
+    document.getElementById("wxupd").textContent="埼玉県南部・気象庁 "+pad(new Date().getHours())+":"+pad(new Date().getMinutes())+" 更新";
   }catch(e){document.getElementById("wxs").textContent="天気を取得できませんでした"}
 }
 function calendar(){
   const c=document.getElementById("cal");
-  c.innerHTML=CALENDAR_EMBED_URL?'<iframe src="'+CALENDAR_EMBED_URL+'"></iframe>':'<div class="note">Googleカレンダーの埋め込みURLを設定すると、ここに今日の予定を表示します。</div>';
+  let u="";
+  try{u=localStorage.getItem("calUrl")||""}catch(e){}
+  if(u.indexOf("https://calendar.google.com/")===0){
+    c.innerHTML='<iframe></iframe><div style="margin-top:8px"><button id="calReset">カレンダーURLを変更</button></div>';
+    c.querySelector("iframe").src=u;
+    document.getElementById("calReset").onclick=function(){try{localStorage.removeItem("calUrl")}catch(e){} calendar()};
+  }else{
+    c.innerHTML='<div class="note" style="margin:0 0 8px">GoogleカレンダーのURLを貼り付けると、このiPadだけに保存して予定を表示します。</div><input id="calIn" placeholder="https://calendar.google.com/calendar/embed?..." style="width:100%;font-size:14px;padding:8px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px"><button id="calSave">保存して表示</button><div id="calErr" class="note"></div>';
+    document.getElementById("calSave").onclick=function(){
+      const v=document.getElementById("calIn").value;
+      const mt=v.match(/https:\/\/calendar\.google\.com\/calendar\/[^"'\s<>]+/);
+      if(!mt){document.getElementById("calErr").textContent="Googleカレンダーの埋め込みURLを貼り付けてください。";return}
+      try{localStorage.setItem("calUrl",mt[0].replace(/&amp;/g,"&"))}catch(e){document.getElementById("calErr").textContent="保存できませんでした。";return}
+      calendar();
+    };
+  }
+}
+const PH_MS=9000;
+let phList=[],phIdx=-1,phTimer=null,phFront=1,phUrls={p1:null,p2:null};
+function phDb(){return new Promise(function(res,rej){const r=indexedDB.open("asaboard",1);r.onupgradeneeded=function(){r.result.createObjectStore("photos",{autoIncrement:true})};r.onsuccess=function(){res(r.result)};r.onerror=function(){rej(r.error)}})}
+function phReq(mode,fn){return phDb().then(function(db){return new Promise(function(res,rej){const tx=db.transaction("photos",mode);const rq=fn(tx.objectStore("photos"));tx.oncomplete=function(){res(rq&&rq.result)};tx.onerror=function(){rej(tx.error)}})})}
+async function phShrink(file){
+  let bmp;try{bmp=await createImageBitmap(file)}catch(e){return null}
+  const s=Math.min(1,1600/Math.max(bmp.width,bmp.height));
+  const c=document.createElement("canvas");c.width=Math.round(bmp.width*s);c.height=Math.round(bmp.height*s);
+  c.getContext("2d").drawImage(bmp,0,0,c.width,c.height);
+  return new Promise(function(res){c.toBlob(res,"image/jpeg",0.85)});
+}
+function phShuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));const t=a[i];a[i]=a[j];a[j]=t}return a}
+function phShow(){
+  if(!phList.length) return;
+  phIdx=(phIdx+1)%phList.length;
+  const nxt=phFront===1?"p2":"p1",cur=phFront===1?"p1":"p2";
+  const el=document.getElementById(nxt);
+  if(phUrls[nxt]) URL.revokeObjectURL(phUrls[nxt]);
+  phUrls[nxt]=URL.createObjectURL(phList[phIdx]);
+  el.src=phUrls[nxt];
+  el.onload=function(){el.classList.add("on");document.getElementById(cur).classList.remove("on")};
+  phFront=phFront===1?2:1;
+}
+async function phLoad(){
+  try{
+    const arr=await phReq("readonly",function(s){return s.getAll()});
+    phList=phShuffle(arr||[]);
+  }catch(e){phList=[]}
+  document.getElementById("phCount").textContent=phList.length?phList.length+"枚":"";
+  document.getElementById("phEmpty").style.display=phList.length?"none":"flex";
+  clearInterval(phTimer);phIdx=-1;
+  ["p1","p2"].forEach(function(id){document.getElementById(id).classList.remove("on")});
+  phFront=1;
+  if(phList.length){phShow();if(phList.length>1) phTimer=setInterval(phShow,PH_MS)}
+}
+function photos(){
+  const inp=document.getElementById("phIn"),cnt=document.getElementById("phCount");
+  document.getElementById("phAdd").onclick=function(){inp.click()};
+  inp.onchange=async function(){
+    const files=Array.from(inp.files);let n=0;
+    for(let i=0;i<files.length;i++){
+      cnt.textContent="保存中 "+(i+1)+"/"+files.length;
+      const b=await phShrink(files[i]);
+      if(b){try{await phReq("readwrite",function(s){return s.add(b)});n++}catch(e){cnt.textContent="保存できませんでした";break}}
+    }
+    inp.value="";
+    await phLoad();
+  };
+  document.getElementById("phClear").onclick=async function(){
+    if(!confirm("保存した写真をすべて削除しますか？")) return;
+    try{await phReq("readwrite",function(s){return s.clear()})}catch(e){}
+    await phLoad();
+  };
+  phLoad();
 }
 (async function(){
   try{holidays=await (await fetch("https://holidays-jp.github.io/api/v1/date.json")).json()}catch(e){}
-  render();weather();calendar();
+  render();weather();calendar();photos();
   setInterval(render,1000);setInterval(weather,1800000);
 })();
 </script>
